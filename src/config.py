@@ -8,7 +8,7 @@ load_dotenv(BASE_DIR / ".env")
 
 COLLECTION_NAME = "autonomous_rag"
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-GROQ_MODEL = "llama3-8b-8192"
+GROQ_MODEL = "llama-3.1-8b-instant"
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")

@@ -2,57 +2,32 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from uuid import uuid4
 
 import pdfplumber
-import requests
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
+from sentence_transformers import SentenceTransformer
 
 from src.config import (
     COLLECTION_NAME,
-    EMBEDDING_MODEL,
-    HF_API_KEY,
     QDRANT_API_KEY,
     QDRANT_URL,
 )
 
+# Load the ultra-lightweight model locally (Runs on any basic CPU!)
+print("Loading local embedding model...")
+embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+print("Embedding model loaded successfully!")
 
 def get_hf_embedding(text: str) -> list[float]:
-    """Get embedding vector from the Hugging Face Inference API with retries."""
+    """Generate embeddings locally to completely bypass Hugging Face API errors."""
     if not text:
         raise ValueError("Text for embedding cannot be empty.")
-
-    url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-    payload = {"inputs": text}
-
-    retries = 0
-    max_retries = 3
-    while True:
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
-            if response.status_code in {429, 503} and retries < max_retries:
-                sleep_seconds = 2**retries
-                time.sleep(sleep_seconds)
-                retries += 1
-                continue
-            response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list) and data and isinstance(data[0], list):
-                return [float(value) for value in data[0]]
-            if isinstance(data, list):
-                return [float(value) for value in data]
-            raise ValueError("Unexpected embedding response format from Hugging Face API.")
-        except requests.RequestException:
-            if retries >= max_retries:
-                raise
-            sleep_seconds = 2**retries
-            time.sleep(sleep_seconds)
-            retries += 1
-
+    
+    # Instantly converts text to a 384-dimension vector on your local CPU
+    return embedding_model.encode(text).tolist()
 
 def init_qdrant() -> QdrantClient:
     """Initialize Qdrant client and ensure collection exists."""
@@ -70,7 +45,6 @@ def init_qdrant() -> QdrantClient:
         )
 
     return client
-
 
 def process_and_upload_pdf(filepath: str) -> int:
     """Extract, chunk, embed, and upload PDF content to Qdrant Cloud."""
@@ -95,6 +69,7 @@ def process_and_upload_pdf(filepath: str) -> int:
     client = init_qdrant()
     source_file = Path(filepath).name
     points: list[PointStruct] = []
+    
     for chunk in chunks:
         embedding = get_hf_embedding(chunk)
         points.append(

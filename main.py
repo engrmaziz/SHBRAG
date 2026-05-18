@@ -1,22 +1,15 @@
 import os
-import shutil
-from pathlib import Path
-from uuid import uuid4
-
-import uvicorn
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
 
 from src.config import COLLECTION_NAME, EMBEDDING_MODEL, GROQ_MODEL
-from src.healing import autonomous_rag_pipeline
 from src.ingest import process_and_upload_pdf
+from src.healing import autonomous_rag_pipeline
 
-app = FastAPI(title="SHBRAG")
-
+app = FastAPI(title="SHBRAG Autonomous Pipeline")
 
 class QueryRequest(BaseModel):
     query: str
-
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -27,34 +20,34 @@ def health() -> dict[str, str]:
         "groq_model": GROQ_MODEL,
     }
 
-
 @app.post("/api/v1/upload")
-def upload_pdf(file: UploadFile = File(...)) -> dict[str, int | str]:
-    data_dir = Path("data")
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    suffix = Path(file.filename or "").suffix
-    temp_path = data_dir / f"{uuid4().hex}{suffix}"
-
-    try:
-        with temp_path.open("wb") as output_buffer:
-            shutil.copyfileobj(file.file, output_buffer)
-
-        chunk_count = process_and_upload_pdf(str(temp_path))
-        return {
-            "status": "success",
-            "message": "File processed and uploaded successfully.",
-            "chunk_count": chunk_count,
-        }
-    finally:
-        if temp_path.exists():
-            os.remove(temp_path)
-
+async def upload_document(file: UploadFile = File(...)):
+    # Save the file temporarily
+    os.makedirs("data", exist_ok=True)
+    temp_filepath = f"data/{file.filename}"
+    
+    with open(temp_filepath, "wb") as buffer:
+        content = await file.read()
+        buffer.write(content)
+        
+    # Process and upload to Qdrant Cloud
+    chunks_processed = process_and_upload_pdf(temp_filepath)
+    
+    # Cleanup temporary file
+    os.remove(temp_filepath)
+    
+    return {
+        "status": "success",
+        "message": f"Successfully ingested {file.filename}", 
+        "chunks_embedded": chunks_processed
+    }
 
 @app.post("/api/v1/ask")
-def ask_question(request: QueryRequest) -> dict:
-    return autonomous_rag_pipeline(request.query)
-
+async def ask_question(request: QueryRequest):
+    # Pass the query to the self-healing orchestrator
+    result = autonomous_rag_pipeline(request.query)
+    return result
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
